@@ -26,6 +26,7 @@
 #include "encoding.h"
 #include "morse.h"
 
+char *msg = NULL;       // Morse message passed from user
 struct morse_moddat_t *morse_dat=NULL;		// Data to be passed around the calls
 
 // Data to be "passed" around to various functions
@@ -42,12 +43,52 @@ struct morse_moddat_t {
 
 // File operations for the morse device
 static const struct file_operations morse_fops = {
-
+        .open = morse_open,
+        .release = morse_release,
+        .write = morse_write
 };
 
-// Place file_operations functions here
+static int morse_open(struct inode *inode, struct file *filp)
+{
+        if (filp->f_mode == O_RDONLY) {
+                printk(KERN_INFO, "kmorse will not open readonly files, exiting ... \n");
+                return -1;
+        }
 
-// End functions
+        printk(KERN_INFO, "kmorse: Successfully opened file\n");
+        return 0;
+}
+
+static int morse_release(struct inode *inode, struct file *filp )
+{
+        printk(KERN_INFO, "kmorse: Successfully released file\n");
+        return 0;
+}
+
+static ssize_t morse_write(struct file *filp, const char __user *ubuf, size_t s, loff_t *o)
+{
+        // Allocate space for message
+        msg = kmalloc(s);
+        if (msg == NULL) {
+                printk(KERN_ERR, "kmorse: Failed to allocate memory for the passed string, exiting ... \n");
+                goto write_out;
+        }
+
+        // Retrieve user argument
+        if (copy_from_user(msg, ubuf, s)) {
+                printk(KERN_ERR, "kmorse: Failed to copy user argument to write operation, exiting ... \n");
+                goto write_out;       
+        }
+
+        // Log success and return
+        printk(KERN_INFO, "kmorse: Successfully received string from user: %s\n", msg);
+        return 0;
+
+        write_out:
+                if (msg)
+                        kfree(msg);
+                return -2;
+}
 
 // Sets device node permission on the /dev device special file
 static char *morse_devnode(struct device *dev, umode_t *mode)
