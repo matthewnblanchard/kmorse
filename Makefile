@@ -1,5 +1,4 @@
-obj-m += bmorse.o
-bmorse-y := encoding.o morse.o
+obj-m += morse.o
 
 all:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules

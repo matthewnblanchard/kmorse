@@ -19,15 +19,24 @@
 #include <linux/gpio.h>
 #include <linux/of_gpio.h>
 #include <linux/platform_device.h>
-#include <mach/platform.h>
+// #include <mach/platform.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/gpio/consumer.h>
 #include <linux/types.h>
-#include "encoding.h"
+// #include "encoding.h"
 #include "morse.h"
+
+#define DEVICE_NAME "kmorse"
+
 
 char *msg = NULL;       // Morse message passed from user
 struct morse_moddat_t *morse_dat=NULL;		// Data to be passed around the calls
+
+// Prototypes
+static int morse_open(struct inode *inode, struct file *filp);
+static int morse_release(struct inode *inode, struct file *filp);
+static ssize_t morse_write(struct file *filp, const char __user *ubuf, size_t s, loff_t *o);
+static irqreturn_t morse_irq(int irq, void *data);
 
 // Data to be "passed" around to various functions
 struct morse_moddat_t {
@@ -51,37 +60,41 @@ static const struct file_operations morse_fops = {
 static int morse_open(struct inode *inode, struct file *filp)
 {
         if (filp->f_mode == O_RDONLY) {
-                printk(KERN_INFO, "kmorse will not open readonly files, exiting ... \n");
+                printk(KERN_INFO "kmorse will not open readonly files, exiting ... \n");
                 return -1;
         }
 
-        printk(KERN_INFO, "kmorse: Successfully opened file\n");
+        printk(KERN_INFO "kmorse: Successfully opened file\n");
         return 0;
 }
 
-static int morse_release(struct inode *inode, struct file *filp )
+static int morse_release(struct inode *inode, struct file *filp)
 {
-        printk(KERN_INFO, "kmorse: Successfully released file\n");
+        printk(KERN_INFO "kmorse: Successfully released file\n");
         return 0;
 }
 
 static ssize_t morse_write(struct file *filp, const char __user *ubuf, size_t s, loff_t *o)
-{
+{       
+        // Free message buffer if it's already occupied
+        if (msg)
+                kfree(msg);
+
         // Allocate space for message
-        msg = kmalloc(s);
+        msg = kmalloc(s, 0);
         if (msg == NULL) {
-                printk(KERN_ERR, "kmorse: Failed to allocate memory for the passed string, exiting ... \n");
+                printk(KERN_ERR "kmorse: Failed to allocate memory for the passed string, exiting ... \n");
                 goto write_out;
         }
 
         // Retrieve user argument
         if (copy_from_user(msg, ubuf, s)) {
-                printk(KERN_ERR, "kmorse: Failed to copy user argument to write operation, exiting ... \n");
+                printk(KERN_ERR "kmorse: Failed to copy user argument to write operation, exiting ... \n");
                 goto write_out;       
         }
 
         // Log success and return
-        printk(KERN_INFO, "kmorse: Successfully received string from user: %s\n", msg);
+        printk(KERN_INFO "kmorse: Successfully received string from user: %s\n", msg);
         return 0;
 
         write_out:
@@ -174,7 +187,7 @@ static int morse_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;	// Device associcated with platform
 	struct device_node *dn=NULL;			// Start of my device tree
-	int ret;	// Return value
+	int ret = 0;	// Return value
 
 
 	// Allocate device driver data and save
