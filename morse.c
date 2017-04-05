@@ -1,7 +1,12 @@
-// A. Sheaff 3/14/2017
-// Morse code kernel driver
-// GPIO4 is active low enable
-// GPIO17 is active high BPSK encoded morse data
+/* Matthew Blanchard
+ * ECE 331
+ * 4/20/2017
+ * Morse code kernel driver
+ * Adapted from framework code by A. Sheaff
+ *
+ * GPIO4 is active low enable
+ * GPIO17 is active high BPSK encoded morse data
+ */
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/device.h>
@@ -19,18 +24,19 @@
 #include <linux/gpio.h>
 #include <linux/of_gpio.h>
 #include <linux/platform_device.h>
-// #include <mach/platform.h>
+#include <mach/platform.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/gpio/consumer.h>
 #include <linux/types.h>
-// #include "encoding.h"
+#include "encoding.h"
 #include "morse.h"
 
 #define DEVICE_NAME "kmorse"
 
 
-char *msg = NULL;       // Morse message passed from user
-struct morse_moddat_t *morse_dat=NULL;		// Data to be passed around the calls
+char *msg = NULL;                       // Morse message passed from user
+struct morse_moddat_t *morse_dat=NULL;	// Data to be passed around the calls
+int err = 0;                            // Error code
 
 // Prototypes
 static int morse_open(struct inode *inode, struct file *filp);
@@ -61,7 +67,7 @@ static int morse_open(struct inode *inode, struct file *filp)
 {
         if (filp->f_mode == O_RDONLY) {
                 printk(KERN_INFO "kmorse will not open readonly files, exiting ... \n");
-                return -1;
+                return -EROFS;
         }
 
         printk(KERN_INFO "kmorse: Successfully opened file\n");
@@ -84,12 +90,14 @@ static ssize_t morse_write(struct file *filp, const char __user *ubuf, size_t s,
         msg = kmalloc(s, 0);
         if (msg == NULL) {
                 printk(KERN_ERR "kmorse: Failed to allocate memory for the passed string, exiting ... \n");
+                err = -ENOMEM;
                 goto write_out;
         }
 
         // Retrieve user argument
         if (copy_from_user(msg, ubuf, s)) {
                 printk(KERN_ERR "kmorse: Failed to copy user argument to write operation, exiting ... \n");
+                err = -EIO;
                 goto write_out;       
         }
 
@@ -100,7 +108,7 @@ static ssize_t morse_write(struct file *filp, const char __user *ubuf, size_t s,
         write_out:
                 if (msg)
                         kfree(msg);
-                return -2;
+                return err;
 }
 
 // Sets device node permission on the /dev device special file
