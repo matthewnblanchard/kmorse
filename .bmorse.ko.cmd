@@ -1,0 +1,1 @@
+cmd_/home/mattb/Documents/GitLab/kmorse/bmorse.ko := ld -EL -r  -T ./scripts/module-common.lds --build-id  -o /home/mattb/Documents/GitLab/kmorse/bmorse.ko /home/mattb/Documents/GitLab/kmorse/bmorse.o /home/mattb/Documents/GitLab/kmorse/bmorse.mod.o

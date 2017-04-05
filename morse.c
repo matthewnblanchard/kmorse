@@ -28,7 +28,7 @@
 #include <linux/pinctrl/consumer.h>
 #include <linux/gpio/consumer.h>
 #include <linux/types.h>
-#include "encoding.h"
+//#include "encoding.h"
 #include "morse.h"
 
 #define DEVICE_NAME "kmorse"
@@ -60,7 +60,7 @@ struct morse_moddat_t {
 static const struct file_operations morse_fops = {
         .open = morse_open,
         .release = morse_release,
-        .write = morse_write
+        .write = morse_write,
 };
 
 static int morse_open(struct inode *inode, struct file *filp)
@@ -83,31 +83,44 @@ static int morse_release(struct inode *inode, struct file *filp)
 static ssize_t morse_write(struct file *filp, const char __user *ubuf, size_t s, loff_t *o)
 {       
         // Free message buffer if it's already occupied
-        if (msg)
+        printk(KERN_INFO "Checking message buffer ...\n");
+        if (msg) {
                 kfree(msg);
+                printk(KERN_INFO "Clearing message buffer ...\n");
+        }
+        printk(KERN_INFO "Message buffer is ready!\n");
 
         // Allocate space for message
+        printk(KERN_INFO "Allocating memory for message buffer ...\n");
         msg = kmalloc(s, 0);
         if (msg == NULL) {
-                printk(KERN_ERR "kmorse: Failed to allocate memory for the passed string, exiting ... \n");
+                printk(KERN_ERR "Failed to allocate memory for the passed string, exiting ... \n");
                 err = -ENOMEM;
                 goto write_out;
         }
+        printk(KERN_INFO "Memory allocated!\n");
 
         // Retrieve user argument
+        printk(KERN_INFO "Grabbing message from userspace ...\n");
         if (copy_from_user(msg, ubuf, s)) {
-                printk(KERN_ERR "kmorse: Failed to copy user argument to write operation, exiting ... \n");
+                printk(KERN_ERR "Failed to copy user argument to write operation, exiting ... \n");
                 err = -EIO;
                 goto write_out;       
         }
+        printk(KERN_INFO "Successfully copied message from userspace!\n");
 
         // Log success and return
-        printk(KERN_INFO "kmorse: Successfully received string from user: %s\n", msg);
-        return 0;
+        printk(KERN_INFO "Successfully received string from user: %s\n", msg);
+        return s;
 
         write_out:
-                if (msg)
+                printk(KERN_INFO "Failed to write message, exiting ...\n");
+                printk(KERN_INFO "Checking message buffer ...\n");
+                if (msg) {
+                        printk(KERN_INFO "Deallocating memory for message buffer\n");
                         kfree(msg);
+                }
+                printk(KERN_INFO "Exiting write with error code: %d\n", err);
                 return err;
 }
 
