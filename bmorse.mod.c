@@ -21,6 +21,7 @@ __attribute__((section("__versions"))) = {
 	{ 0x6bc3fbc0, __VMLINUX_SYMBOL_STR(__unregister_chrdev) },
 	{ 0xb8b5974, __VMLINUX_SYMBOL_STR(kmalloc_caches) },
 	{ 0x12da5bb2, __VMLINUX_SYMBOL_STR(__kmalloc) },
+	{ 0xf9a482f9, __VMLINUX_SYMBOL_STR(msleep) },
 	{ 0x2e5810c6, __VMLINUX_SYMBOL_STR(__aeabi_unwind_cpp_pr1) },
 	{ 0xaf631f5f, __VMLINUX_SYMBOL_STR(gpio_to_desc) },
 	{ 0x573a869c, __VMLINUX_SYMBOL_STR(device_destroy) },
@@ -60,4 +61,4 @@ __attribute__((section(".modinfo"))) =
 
 MODULE_ALIAS("of:N*T*Cbrcm,bcm2835-morse*");
 
-MODULE_INFO(srcversion, "E0CE2D58E400524477BC850");
+MODULE_INFO(srcversion, "795296A614F65122C24CD35");

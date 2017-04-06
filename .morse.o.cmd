@@ -638,6 +638,7 @@ deps_/home/mattb/Documents/GitLab/kmorse/morse.o := \
     $(wildcard include/config/suspend.h) \
     $(wildcard include/config/hibernate/callbacks.h) \
   arch/arm/mach-bcm2709/include/mach/platform.h \
+  /home/mattb/Documents/GitLab/kmorse/encoding.h \
   /home/mattb/Documents/GitLab/kmorse/morse.h \
 
 /home/mattb/Documents/GitLab/kmorse/morse.o: $(deps_/home/mattb/Documents/GitLab/kmorse/morse.o)

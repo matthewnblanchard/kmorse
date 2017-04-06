@@ -28,11 +28,13 @@
 #include <linux/pinctrl/consumer.h>
 #include <linux/gpio/consumer.h>
 #include <linux/types.h>
-//#include "encoding.h"
+#include "encoding.h"
 #include "morse.h"
 
 #define DEVICE_NAME "kmorse"
-
+#define MORSE_UNIT 500                  // 500ms half-cycle
+#define PHASE_ZERO 0                    // BPSK phase of 0
+#define PHASE_PI 1                      // BPSK phase of pi radians
 
 char *msg = NULL;                       // Morse message passed from user
 struct morse_moddat_t *morse_dat=NULL;	// Data to be passed around the calls
@@ -43,6 +45,10 @@ static int morse_open(struct inode *inode, struct file *filp);
 static int morse_release(struct inode *inode, struct file *filp);
 static ssize_t morse_write(struct file *filp, const char __user *ubuf, size_t s, loff_t *o);
 static irqreturn_t morse_irq(int irq, void *data);
+static int morse_run(const char *msg, size_t s);
+static int morse_bpsk(char *morse, int *phase);
+static int morse_cycle(int phase); 
+static int morse_encode(char c, unsigned char *sum, int *phase);
 
 // Data to be "passed" around to various functions
 struct morse_moddat_t {
@@ -109,8 +115,11 @@ static ssize_t morse_write(struct file *filp, const char __user *ubuf, size_t s,
         }
         printk(KERN_INFO "Successfully copied message from userspace!\n");
 
-        // Log success and return
+        // Log successful message copy
         printk(KERN_INFO "Successfully received string from user: %s\n", msg);
+
+        // Encode and send Morse message
+        morse_run(msg, s);
         return s;
 
         write_out:
@@ -122,6 +131,110 @@ static ssize_t morse_write(struct file *filp, const char __user *ubuf, size_t s,
                 }
                 printk(KERN_INFO "Exiting write with error code: %d\n", err);
                 return err;
+}
+
+static int morse_run(const char *msg, size_t s)
+{
+        int i = 0;                      // String index
+        unsigned char checksum = 0;     // Checksum of 'high' Morse time units
+        int phase = PHASE_ZERO;         // Start at zero phase
+
+        printk(KERN_INFO "Beginning morse transmission ... \n");
+        
+        // Pull ENABLE low for one cycle before transmission begins;
+        gpiod_set_value(morse_dat->enable, 0);
+        gpiod_set_value(morse_dat->bm, 0);
+        msleep(MORSE_UNIT * 2);
+
+        // Preamble
+        morse_bpsk("__*_", &phase);
+        checksum++;
+
+        // Iterate through each character. The last character does not include the three
+        // time unit separator
+        for (i = 1; msg[i] != '\0'; i++) {
+                morse_encode(msg[i - 1], &checksum, &phase);
+                morse_bpsk("___", &phase);
+        }
+        morse_encode(msg[i - 1], &checksum, &phase); 
+
+        // Print checksum
+        morse_bpsk("_", &phase);        // Separating 0
+        checksum = ~checksum;           // Ones complement
+        while (checksum != 0b0) {
+                if (checksum & 0b1)
+                        morse_bpsk("*", &phase);
+                else
+                        morse_bpsk("_", &phase);
+                checksum >>= 1;
+        }
+        printk(KERN_INFO "\n");
+
+        // Bring enable high again one full cycle after transmission
+        gpiod_set_value(morse_dat->bm, 0);
+        msleep(MORSE_UNIT * 2);
+        gpiod_set_value(morse_dat->enable, 1);
+
+        return 0;
+}
+
+static int morse_bpsk(char *morse, int *phase)
+{
+        char *c = NULL;                 // Current character being analyzed
+
+        for (c = &morse[0]; *c != '\0'; c++) {
+                printk(KERN_INFO "%c", *c);
+                if (*c == '_') {        // On a '_' cycle BPSK pin with same phase
+                        morse_cycle(*phase);
+                } else if (*c == '*') { // On a '*', shift the phase, then cycle the BPSK pin
+                        *phase = !(*phase);
+                        morse_cycle(*phase);
+                }
+        }
+        return 0;
+}
+
+static int morse_cycle(int phase)
+{
+        if (phase == PHASE_ZERO) {
+                gpiod_set_value(morse_dat->bm, 0);
+                msleep(MORSE_UNIT);
+                gpiod_set_value(morse_dat->bm, 1);
+                msleep(MORSE_UNIT);
+                return 0;
+        } else if (phase == PHASE_PI) {
+                gpiod_set_value(morse_dat->bm, 1);
+                msleep(MORSE_UNIT);
+                gpiod_set_value(morse_dat->bm, 0);
+                msleep(MORSE_UNIT);
+                return 0;               
+        } else {
+                printk(KERN_ERR "Error: failed to cycle BPSK pin\n");
+                return -1;
+        }
+}
+
+static int morse_encode(char c, unsigned char *sum, int *phase) 
+{
+        unsigned int binary = 0b0;      // Binary Morse translation of char
+
+        // Space is a special case: translation is one Morse time unit (in addition to the 
+        // standard separator of three on both sides
+        if (c == ' ') {
+                morse_bpsk("_", phase);
+        } else {
+                binary = morse[(int)c];
+                while (binary != 0b0) { // Read each bit, adding '*' for 1 and '_' for 0
+                        if (binary & 0b1) {
+                                morse_bpsk("*", phase);
+                                (*sum)++;
+                        } else {
+                                morse_bpsk("_", phase);
+                        }
+                        binary >>= 1;
+                }
+        }
+        return 0;
 }
 
 // Sets device node permission on the /dev device special file
