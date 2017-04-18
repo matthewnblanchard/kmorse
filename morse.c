@@ -18,6 +18,7 @@
 #include <linux/io.h>
 #include <linux/ioctl.h>
 #include <asm/uaccess.h>
+#include <linux/mutex.h>
 #include <linux/irq.h>
 #include <linux/interrupt.h>
 #include <linux/slab.h>
@@ -32,7 +33,7 @@
 #include "morse.h"
 
 #define DEVICE_NAME "kmorse"
-#define MORSE_UNIT 500                  // 500ms half-cycle
+#define MORSE_UNIT 20000                // 20000us half-cycle
 #define PHASE_ZERO 0                    // BPSK phase of 0
 #define PHASE_PI 1                      // BPSK phase of pi radians
 
@@ -59,8 +60,11 @@ struct morse_moddat_t {
 	struct gpio_desc *bm;		// gpiod BPSK Morse
 	struct gpio_desc *shdn;		// Shutdown pin
 
-	int irq;					// Shutdown IRQ
+	int irq;			// Shutdown IRQ
 };
+
+// Locking
+DEFINE_MUTEX(morse_lock);
 
 // File operations for the morse device
 static const struct file_operations morse_fops = {
@@ -87,7 +91,16 @@ static int morse_release(struct inode *inode, struct file *filp)
 }
 
 static ssize_t morse_write(struct file *filp, const char __user *ubuf, size_t s, loff_t *o)
-{       
+{
+        // Acquire lock
+        printk(KERN_INFO "Waiting for lock ...\n");
+        if (mutex_lock_interruptible(&morse_lock)) {
+                printk(KERN_INFO "Process interrupted!\n");
+                err = -ERESTARTSYS;
+                goto lock_failed;
+        }
+        printk(KERN_INFO "Lock obtained!\n");
+
         // Free message buffer if it's already occupied
         printk(KERN_INFO "Checking message buffer ...\n");
         if (msg) {
@@ -120,9 +133,15 @@ static ssize_t morse_write(struct file *filp, const char __user *ubuf, size_t s,
 
         // Encode and send Morse message
         morse_run(msg, s);
+        
+        // Free memory and exit
+        kfree(msg);
+        mutex_unlock(&morse_lock); 
         return s;
 
         write_out:
+                mutex_unlock(&morse_lock);
+        lock_failed:
                 printk(KERN_INFO "Failed to write message, exiting ...\n");
                 printk(KERN_INFO "Checking message buffer ...\n");
                 if (msg) {
@@ -144,8 +163,8 @@ static int morse_run(const char *msg, size_t s)
         // Pull ENABLE low for one cycle before transmission begins;
         gpiod_set_value(morse_dat->enable, 0);
         gpiod_set_value(morse_dat->bm, 0);
-        msleep(MORSE_UNIT * 2);
-
+        usleep_range(MORSE_UNIT * 3, MORSE_UNIT * 3);
+ 
         // Preamble
         morse_bpsk("__*_", &phase);
         checksum++;
@@ -168,11 +187,10 @@ static int morse_run(const char *msg, size_t s)
                         morse_bpsk("_", &phase);
                 checksum >>= 1;
         }
-        printk(KERN_INFO "\n");
-
+ 
         // Bring enable high again one full cycle after transmission
         gpiod_set_value(morse_dat->bm, 0);
-        msleep(MORSE_UNIT * 2);
+        usleep_range(MORSE_UNIT * 3, MORSE_UNIT * 3);
         gpiod_set_value(morse_dat->enable, 1);
 
         return 0;
@@ -183,7 +201,6 @@ static int morse_bpsk(char *morse, int *phase)
         char *c = NULL;                 // Current character being analyzed
 
         for (c = &morse[0]; *c != '\0'; c++) {
-                printk(KERN_INFO "%c", *c);
                 if (*c == '_') {        // On a '_' cycle BPSK pin with same phase
                         morse_cycle(*phase);
                 } else if (*c == '*') { // On a '*', shift the phase, then cycle the BPSK pin
@@ -198,15 +215,15 @@ static int morse_cycle(int phase)
 {
         if (phase == PHASE_ZERO) {
                 gpiod_set_value(morse_dat->bm, 0);
-                msleep(MORSE_UNIT);
+                usleep_range(MORSE_UNIT, MORSE_UNIT);
                 gpiod_set_value(morse_dat->bm, 1);
-                msleep(MORSE_UNIT);
+                usleep_range(MORSE_UNIT, MORSE_UNIT);
                 return 0;
         } else if (phase == PHASE_PI) {
                 gpiod_set_value(morse_dat->bm, 1);
-                msleep(MORSE_UNIT);
+                usleep_range(MORSE_UNIT, MORSE_UNIT);
                 gpiod_set_value(morse_dat->bm, 0);
-                msleep(MORSE_UNIT);
+                usleep_range(MORSE_UNIT, MORSE_UNIT);
                 return 0;               
         } else {
                 printk(KERN_ERR "Error: failed to cycle BPSK pin\n");
@@ -287,7 +304,7 @@ static struct gpio_desc *morse_dt_obtain_pin(struct device *dev, struct device_n
 			return NULL;
 		}
 	} else {
-		ret=devm_gpio_request_one(dev,pin,GPIOF_IN,label);
+        ret=devm_gpio_request_one(dev,pin,GPIOF_IN,label);
 		if (ret<0) {
 			dev_err(dev,"Cannot allocate gpio pin\n");
 			of_node_put(child);
@@ -314,15 +331,14 @@ static struct gpio_desc *morse_dt_obtain_pin(struct device *dev, struct device_n
 }
 
 // My data is going to go in either platform_data or driver_data
-//  within &pdev->dev. (dev_set/get_drvdata)
+// within &pdev->dev. (dev_set/get_drvdata)
 // Called when the device is "found" - for us
 // This is called on module load based on ".of_match_table" member
 static int morse_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;	// Device associcated with platform
-	struct device_node *dn=NULL;			// Start of my device tree
-	int ret = 0;	// Return value
-
+	struct device_node *dn=NULL;		// Start of my device tree
+	int ret = 0;	                        // Return value
 
 	// Allocate device driver data and save
 	morse_dat=kmalloc(sizeof(struct morse_moddat_t),GFP_ATOMIC);
@@ -331,7 +347,7 @@ static int morse_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 	memset(morse_dat,0,sizeof(struct morse_moddat_t));
-	
+
 	// Tag in device data to the device
 	dev_set_drvdata(dev,morse_dat);
 
