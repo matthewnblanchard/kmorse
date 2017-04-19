@@ -7,6 +7,7 @@
  * GPIO4 is active low enable
  * GPIO17 is active high BPSK encoded morse data
  */
+
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/device.h>
@@ -47,9 +48,9 @@ static int morse_release(struct inode *inode, struct file *filp);
 static ssize_t morse_write(struct file *filp, const char __user *ubuf, size_t s, loff_t *o);
 static irqreturn_t morse_irq(int irq, void *data);
 static int morse_run(const char *msg, size_t s);
-static int morse_bpsk(char *morse, int *phase);
-static int morse_cycle(int phase); 
-static int morse_encode(char c, unsigned char *sum, int *phase);
+static int morse_bpsk(u32 morse, int *phase, int len, u8 *sum);
+static int morse_cycle(int *phase); 
+static int morse_encode(char c, int *phase, u8 *sum);
 
 // Data to be "passed" around to various functions
 struct morse_moddat_t {
@@ -64,7 +65,7 @@ struct morse_moddat_t {
 };
 
 // Locking
-DEFINE_MUTEX(morse_lock);
+static DEFINE_MUTEX(morse_lock);
 
 // File operations for the morse device
 static const struct file_operations morse_fops = {
@@ -75,87 +76,80 @@ static const struct file_operations morse_fops = {
 
 static int morse_open(struct inode *inode, struct file *filp)
 {
+        // Check that the file was opened in a writeable mode
         if (filp->f_mode == O_RDONLY) {
-                printk(KERN_INFO "kmorse will not open readonly files, exiting ... \n");
+                printk(KERN_INFO "kmorse will not open in read only mode, exiting ... \n");
                 return -EROFS;
         }
 
-        printk(KERN_INFO "kmorse: Successfully opened file\n");
         return 0;
 }
 
 static int morse_release(struct inode *inode, struct file *filp)
 {
-        printk(KERN_INFO "kmorse: Successfully released file\n");
         return 0;
 }
 
 static ssize_t morse_write(struct file *filp, const char __user *ubuf, size_t s, loff_t *o)
 {
         // Acquire lock
-        printk(KERN_INFO "Waiting for lock ...\n");
+        printk(KERN_INFO "*** Waiting for lock ***\n");
         if (mutex_lock_interruptible(&morse_lock)) {
                 printk(KERN_INFO "Process interrupted!\n");
                 err = -ERESTARTSYS;
-                goto lock_failed;
+                goto lock_out;
         }
-        printk(KERN_INFO "Lock obtained!\n");
+        printk(KERN_INFO "*** Lock obtained ***\n");
 
         // Free message buffer if it's already occupied
-        printk(KERN_INFO "Checking message buffer ...\n");
-        if (msg) {
+        if (msg) 
                 kfree(msg);
-                printk(KERN_INFO "Clearing message buffer ...\n");
-        }
-        printk(KERN_INFO "Message buffer is ready!\n");
 
         // Allocate space for message
-        printk(KERN_INFO "Allocating memory for message buffer ...\n");
         msg = kmalloc(s, 0);
         if (msg == NULL) {
                 printk(KERN_ERR "Failed to allocate memory for the passed string, exiting ... \n");
                 err = -ENOMEM;
                 goto write_out;
         }
-        printk(KERN_INFO "Memory allocated!\n");
 
         // Retrieve user argument
-        printk(KERN_INFO "Grabbing message from userspace ...\n");
         if (copy_from_user(msg, ubuf, s)) {
                 printk(KERN_ERR "Failed to copy user argument to write operation, exiting ... \n");
                 err = -EIO;
                 goto write_out;       
         }
-        printk(KERN_INFO "Successfully copied message from userspace!\n");
 
         // Log successful message copy
         printk(KERN_INFO "Successfully received string from user: %s\n", msg);
 
         // Encode and send Morse message
         morse_run(msg, s);
-        
+
         // Free memory and exit
         kfree(msg);
-        mutex_unlock(&morse_lock); 
+
+        // Release lock
+        mutex_unlock(&morse_lock);
+        printk(KERN_INFO "*** Released lock ***\n");
+
         return s;
 
         write_out:
                 mutex_unlock(&morse_lock);
-        lock_failed:
-                printk(KERN_INFO "Failed to write message, exiting ...\n");
-                printk(KERN_INFO "Checking message buffer ...\n");
-                if (msg) {
-                        printk(KERN_INFO "Deallocating memory for message buffer\n");
+                printk(KERN_INFO "*** Released lock ***\n");
+        lock_out:
+                if (msg)
                         kfree(msg);
-                }
-                printk(KERN_INFO "Exiting write with error code: %d\n", err);
                 return err;
 }
 
 static int morse_run(const char *msg, size_t s)
 {
         int i = 0;                      // String index
-        unsigned char checksum = 0;     // Checksum of 'high' Morse time units
+        int j = 0;                      // Loop index
+        u8 checksum = 0;                // Checksum of 'high' Morse time units
+        u8 dummy = 0;                   // Dummy checksum to pass to BPSK function so that encoding the checksum does not increment it
         int phase = PHASE_ZERO;         // Start at zero phase
 
         printk(KERN_INFO "Beginning morse transmission ... \n");
@@ -163,63 +157,65 @@ static int morse_run(const char *msg, size_t s)
         // Pull ENABLE low for one cycle before transmission begins;
         gpiod_set_value(morse_dat->enable, 0);
         gpiod_set_value(morse_dat->bm, 0);
-        usleep_range(MORSE_UNIT * 3, MORSE_UNIT * 3);
+        usleep_range(MORSE_UNIT * 2, MORSE_UNIT * 2);
  
         // Preamble
-        morse_bpsk("__*_", &phase);
-        checksum++;
+        morse_bpsk(0b0010, &phase, 4, &checksum);
 
         // Iterate through each character. The last character does not include the three
         // time unit separator
         for (i = 1; msg[i] != '\0'; i++) {
-                morse_encode(msg[i - 1], &checksum, &phase);
-                morse_bpsk("___", &phase);
+                morse_encode(msg[i - 1], &phase, &checksum);
+                morse_bpsk(0b000, &phase, 3, &checksum);
         }
-        morse_encode(msg[i - 1], &checksum, &phase); 
+        morse_encode(msg[i - 1], &phase, &checksum); 
 
         // Print checksum
-        morse_bpsk("_", &phase);        // Separating 0
-        checksum = ~checksum;           // Ones complement
-        while (checksum != 0b0) {
+        morse_bpsk(0b0, &phase, 1, &checksum);    // Separating 0
+        checksum = ~checksum;                     // Ones complement
+        for (j = 0; j < 8; j++) {
                 if (checksum & 0b1)
-                        morse_bpsk("*", &phase);
+                        morse_bpsk(0b1, &phase, 1, &dummy);
                 else
-                        morse_bpsk("_", &phase);
+                        morse_bpsk(0b0, &phase, 0, &dummy);
                 checksum >>= 1;
         }
  
         // Bring enable high again one full cycle after transmission
         gpiod_set_value(morse_dat->bm, 0);
-        usleep_range(MORSE_UNIT * 3, MORSE_UNIT * 3);
+        usleep_range(MORSE_UNIT * 2, MORSE_UNIT * 2);
         gpiod_set_value(morse_dat->enable, 1);
 
         return 0;
 }
 
-static int morse_bpsk(char *morse, int *phase)
+static int morse_bpsk(u32 morse, int *phase, int len, u8 *sum)
 {
-        char *c = NULL;                 // Current character being analyzed
-
-        for (c = &morse[0]; *c != '\0'; c++) {
-                if (*c == '_') {        // On a '_' cycle BPSK pin with same phase
-                        morse_cycle(*phase);
-                } else if (*c == '*') { // On a '*', shift the phase, then cycle the BPSK pin
-                        *phase = !(*phase);
-                        morse_cycle(*phase);
+        int i = 0;      // Loop index
+        for (i = 0; i < len; i++) {
+                if (morse & 0b1) {       // On a 1, phase shift by pi, then cycle BPSK pin
+                        *phase = !(*phase); 
+                        morse_cycle(phase);
+                        (*sum)++;
+                } else {                 // On a 0, do not phase shift, then cycle BPSK pin
+                        morse_cycle(phase);
                 }
+                morse >>= 1;             // Shift in next bit
         }
         return 0;
 }
 
-static int morse_cycle(int phase)
+static int morse_cycle(int *phase)
 {
-        if (phase == PHASE_ZERO) {
+        if (*phase == PHASE_ZERO) {
+                printk(KERN_INFO "kmorse: cycled BPSK at PHASE_ZERO\n");
                 gpiod_set_value(morse_dat->bm, 0);
                 usleep_range(MORSE_UNIT, MORSE_UNIT);
                 gpiod_set_value(morse_dat->bm, 1);
                 usleep_range(MORSE_UNIT, MORSE_UNIT);
                 return 0;
-        } else if (phase == PHASE_PI) {
+        } else if (*phase == PHASE_PI) {
+                printk(KERN_INFO "kmorse: cycled BPSK at PHASE_PI\n");
                 gpiod_set_value(morse_dat->bm, 1);
                 usleep_range(MORSE_UNIT, MORSE_UNIT);
                 gpiod_set_value(morse_dat->bm, 0);
@@ -231,26 +227,14 @@ static int morse_cycle(int phase)
         }
 }
 
-static int morse_encode(char c, unsigned char *sum, int *phase) 
+static int morse_encode(char c, int *phase, u8 *sum) 
 {
-        unsigned int binary = 0b0;      // Binary Morse translation of char
-
         // Space is a special case: translation is one Morse time unit (in addition to the 
         // standard separator of three on both sides
-        if (c == ' ') {
-                morse_bpsk("_", phase);
-        } else {
-                binary = morse[(int)c];
-                while (binary != 0b0) { // Read each bit, adding '*' for 1 and '_' for 0
-                        if (binary & 0b1) {
-                                morse_bpsk("*", phase);
-                                (*sum)++;
-                        } else {
-                                morse_bpsk("_", phase);
-                        }
-                        binary >>= 1;
-                }
-        }
+        if (c == ' ')
+                morse_bpsk(0b0, phase, 1, sum);
+        else 
+                morse_bpsk(morse[(int)c].code, phase, morse[(int)c].size, sum);
         return 0;
 }
 

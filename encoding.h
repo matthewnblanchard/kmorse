@@ -5,4 +5,11 @@
  * Description: Declaration for encoding.c
  */
 
-extern const unsigned int morse[256];
+#include <linux/types.h>
+
+struct encoding {
+    int size;
+    u32 code;
+};
+
+extern const struct encoding morse[256];
