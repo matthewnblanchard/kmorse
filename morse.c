@@ -38,9 +38,7 @@
 #define PHASE_ZERO 0                    // BPSK phase of 0
 #define PHASE_PI 1                      // BPSK phase of pi radians
 
-char *msg = NULL;                       // Morse message passed from user
 struct morse_moddat_t *morse_dat=NULL;	// Data to be passed around the calls
-int err = 0;                            // Error code
 
 // Prototypes
 static int morse_open(struct inode *inode, struct file *filp);
@@ -92,6 +90,9 @@ static int morse_release(struct inode *inode, struct file *filp)
 
 static ssize_t morse_write(struct file *filp, const char __user *ubuf, size_t s, loff_t *o)
 {
+        int err = 0;            // Error code
+        char *msg = NULL;       // Message buffer
+
         // Acquire lock
         printk(KERN_INFO "*** Waiting for lock ***\n");
         if (mutex_lock_interruptible(&morse_lock)) {
@@ -101,12 +102,8 @@ static ssize_t morse_write(struct file *filp, const char __user *ubuf, size_t s,
         }
         printk(KERN_INFO "*** Lock obtained ***\n");
 
-        // Free message buffer if it's already occupied
-        if (msg) 
-                kfree(msg);
-
         // Allocate space for message
-        msg = kmalloc(s, 0);
+        msg = kmalloc(s, GFP_KERNEL);
         if (msg == NULL) {
                 printk(KERN_ERR "Failed to allocate memory for the passed string, exiting ... \n");
                 err = -ENOMEM;
@@ -139,7 +136,7 @@ static ssize_t morse_write(struct file *filp, const char __user *ubuf, size_t s,
                 mutex_unlock(&morse_lock);
                 printk(KERN_INFO "*** Released lock ***\n");
         lock_out:
-                if (msg)
+                if (msg != NULL)
                         kfree(msg);
                 return err;
 }
@@ -160,15 +157,14 @@ static int morse_run(const char *msg, size_t s)
         usleep_range(MORSE_UNIT * 2, MORSE_UNIT * 2);
  
         // Preamble
-        morse_bpsk(0b0010, &phase, 4, &checksum);
+        morse_bpsk(0b0100, &phase, 4, &checksum);
 
         // Iterate through each character. The last character does not include the three
         // time unit separator
-        for (i = 1; msg[i] != '\0'; i++) {
-                morse_encode(msg[i - 1], &phase, &checksum);
+        for (i = 0; i < s; i++) {
+                morse_encode(msg[i], &phase, &checksum);
                 morse_bpsk(0b000, &phase, 3, &checksum);
         }
-        morse_encode(msg[i - 1], &phase, &checksum); 
 
         // Print checksum
         morse_bpsk(0b0, &phase, 1, &checksum);    // Separating 0

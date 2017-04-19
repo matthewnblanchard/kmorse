@@ -24,7 +24,7 @@ int main(int argc, char *argv[])
                 return 1;
         }
 
-        size = strlen(argv[1]) + 1; // String size, plus one for null terminator
+        size = strlen(argv[1]); // String size
        
         printf("Opening bmorse ... \n"); 
         fd = open("/dev/morse", O_WRONLY);
