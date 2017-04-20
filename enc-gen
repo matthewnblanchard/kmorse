@@ -1,3 +1,4 @@
+#!/usr/bin/perl
 # Matthew Blanchard 
 # 2/17/2017
 # Title: encoding.pl
@@ -5,7 +6,6 @@
 #       characters to Morse code. Reads encodings from file 'encoding.txt', and
 #       fills in remaining ASCII characters with unused Morse encodings.
 
-#!/usr/bin/perl
 use strict;
 use warnings;
 
@@ -46,6 +46,12 @@ while (my $line = <$text>) {
         $morse = "0b" . $morse;   # Add in binary identifier       
         $encode{ord($x[0])} = $morse;
         $decode{$morse} = ord($x[0]);
+
+        # If the character was a capital letter, also encode the lowercase letter
+        if ((ord($x[0]) <= ord('Z')) && (ord($x[0]) >= ord('A'))) {
+                $encode{ord($x[0]) + 32} = $morse;
+                $decode{$morse} = ord($x[0]) + 32;
+        } 
 }
 
 # Populate rest of %encode from 0-255 with unused morse encoding
