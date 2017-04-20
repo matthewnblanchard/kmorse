@@ -15,41 +15,85 @@
 #include<unistd.h>
 #include<stdlib.h>
 #include<string.h>
+#include<semaphore.h>
+
+int morse(char *msg);
 
 int main(int argc, char *argv[])
 {
-        int i = 0;       // Loop index
-        int fd = 0;      // File descriptor
-        size_t size = 0; // String size
-        pid_t child;     // PID for forking
+        int i = 0;              // Loop index
+        FILE *dict_fp = 0;      // Dictionary file pointer
+        size_t size = 0;        // String sizes
+        pid_t child;            // PID for forking
+        char words[3][256];     // Buffer for strings read from the dictionary
+        int ret = 0;            // Return value
 
-        // Create a child process for each argument
-        for (i = 1; i < argc; i++) {
-                child = fork();           // Create child
-                if (child == 0) {         // If this is the child, exit the loop
-                        break;  
-                } else if (child < 0) {   // If the child was not created, note it and keep going
-                        printf("Warning: failed to create child process for %s argument!\n", argv[i]);
-                }      
+        // Open the dictionary
+        dict_fp = fopen("american-english", "r");
+        if (dict_fp == NULL) {
+                printf("Error: failed to open 'american-english'");
+                return 1;
         }
 
-        // Child processess write their argument to bmorse
-        if (child == 0) {
-                size = strlen(argv[i]); // String size
-       
-                fd = open("/dev/morse", O_WRONLY);
-                if (fd <= 0) {
-                        printf("Error: failed to open bmorse for writing\n");
-                        return 2;
-                }
-       
-                if (size != write(fd, argv[i], size)) {
-                        printf("Error: failed to write to bmorse\n");
-                        return 3;
-                }
+        // Continually read lines from the dictionary
+        while (fgets(words[i], 256, dict_fp) != NULL) {
 
-                close(fd);
-                return 0;
+                // Record size and chop off newline if present
+                size = strlen(words[i]);        
+                if (words[i][(int)size - 1] == '\n')
+                        words[i][(int)size - 1] = '\0';
+
+                // Once three strings are obtained, fork two strings to child processes and
+                // run the third on the parent
+                if (i == 2) {
+
+                        // Child 1
+                        child = fork();
+                        if (child == 0) {
+                                return morse(words[0]);
+                        }
+
+                        // Child 2
+                        child = fork();
+                        if (child == 0) {
+                                return morse(words[1]);
+                        }
+
+                        // Parent runs the last word
+                        ret = morse(words[2]);
+                        if (ret)
+                                return ret;
+
+                        // Bring index back down to 0
+                        i = 0;
+                }
+                else {
+                        i++;
+                }
         }
+
+        return 0;
+}
+
+int morse(char *msg) 
+{
+        size_t msg_size = strlen(msg);
+
+        int morse_fd = 0;       // Morse file descriptor
+         
+        morse_fd = open("/dev/morse", O_WRONLY);
+        if (morse_fd <= 0) {
+                printf("Error: failed to open bmorse for writing\n");
+                return 1;
+        }
+      
+        if (msg_size != write(morse_fd, msg, msg_size)) {
+                printf("Error: failed to write to bmorse\n");
+                return 2;
+        }
+
+        printf("Wrote %s to bmorse\n", msg);
+
+        close(morse_fd);
         return 0;
 }

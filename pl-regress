@@ -1,1 +1,36 @@
 #!/usr/bin/perl
+# Matthew Blanchard
+# 4/20/2017
+# Title: pl-regress
+# Description: Exhaustively tests bmorse module by running the dictionary from the 
+#       wamerican package through it. Words are sent in sets of three to the C program
+#       regress, which forks and attempts to run them concurrently through bmorse.
+
+use strict;
+use warnings;
+
+# Variables
+my $text;       # File handle for reading the dictionary
+my @args;       # Hash to hold the set of arguments extracted from the dictionary
+my $i = 0;      # Index for counting arugments read (they're sent in sets of three)
+# Open dictionary
+open ($text, '<', 'american-english')
+        or die "Failed to open dictionary: couldn't open 'american-english'\n";
+
+# Extract strings from the dictionary and run them
+while (my $line = <$text>) {
+        chomp $line;
+
+        # Copy string into argument set
+        $args[$i] = $line;
+        $i++;
+
+        # If we have three arguments, send them and reset the count
+        if ($i == 2) {
+                system("regress", $args[0], $args[1], $args[2]);
+                $i = 0;
+        }
+}     
+
+        
+

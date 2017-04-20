@@ -94,13 +94,13 @@ static ssize_t morse_write(struct file *filp, const char __user *ubuf, size_t s,
         char *msg = NULL;       // Message buffer
 
         // Acquire lock
-        printk(KERN_INFO "*** Waiting for lock ***\n");
+        // printk(KERN_INFO "*** Waiting for lock ***\n");
         if (mutex_lock_interruptible(&morse_lock)) {
                 printk(KERN_INFO "Process interrupted!\n");
                 err = -ERESTARTSYS;
                 goto lock_out;
         }
-        printk(KERN_INFO "*** Lock obtained ***\n");
+        // printk(KERN_INFO "*** Lock obtained ***\n");
 
         // Allocate space for message
         msg = kmalloc(s, GFP_KERNEL);
@@ -118,7 +118,7 @@ static ssize_t morse_write(struct file *filp, const char __user *ubuf, size_t s,
         }
 
         // Log successful message copy
-        printk(KERN_INFO "Successfully received string from user: %s\n", msg);
+        // printk(KERN_INFO "Successfully received string from user: %s\n", msg);
 
         // Encode and send Morse message
         morse_run(msg, s);
@@ -128,13 +128,13 @@ static ssize_t morse_write(struct file *filp, const char __user *ubuf, size_t s,
 
         // Release lock
         mutex_unlock(&morse_lock);
-        printk(KERN_INFO "*** Released lock ***\n");
+        // printk(KERN_INFO "*** Released lock ***\n");
 
         return s;
 
         write_out:
                 mutex_unlock(&morse_lock);
-                printk(KERN_INFO "*** Released lock ***\n");
+                // printk(KERN_INFO "*** Released lock ***\n");
         lock_out:
                 if (msg != NULL)
                         kfree(msg);
@@ -149,7 +149,7 @@ static int morse_run(const char *msg, size_t s)
         u8 dummy = 0;                   // Dummy checksum to pass to BPSK function so that encoding the checksum does not increment it
         int phase = PHASE_ZERO;         // Start at zero phase
 
-        printk(KERN_INFO "Beginning morse transmission ... \n");
+        // printk(KERN_INFO "Beginning morse transmission ... \n");
         
         // Pull ENABLE low for one cycle before transmission begins;
         gpiod_set_value(morse_dat->enable, 0);
@@ -177,10 +177,13 @@ static int morse_run(const char *msg, size_t s)
                 checksum >>= 1;
         }
  
-        // Bring enable high again one full cycle after transmission
+        // Bring ENABLE high again one full cycle after transmission
         gpiod_set_value(morse_dat->bm, 0);
         usleep_range(MORSE_UNIT * 2, MORSE_UNIT * 2);
         gpiod_set_value(morse_dat->enable, 1);
+
+        // Wait one additional cycle to avoid exit and release lock
+        usleep_range(MORSE_UNIT * 2, MORSE_UNIT * 2);
 
         return 0;
 }
@@ -204,14 +207,14 @@ static int morse_bpsk(u32 morse, int *phase, int len, u8 *sum)
 static int morse_cycle(int *phase)
 {
         if (*phase == PHASE_ZERO) {
-                printk(KERN_INFO "kmorse: cycled BPSK at PHASE_ZERO\n");
+                // printk(KERN_INFO "kmorse: cycled BPSK at PHASE_ZERO\n");
                 gpiod_set_value(morse_dat->bm, 0);
                 usleep_range(MORSE_UNIT, MORSE_UNIT);
                 gpiod_set_value(morse_dat->bm, 1);
                 usleep_range(MORSE_UNIT, MORSE_UNIT);
                 return 0;
         } else if (*phase == PHASE_PI) {
-                printk(KERN_INFO "kmorse: cycled BPSK at PHASE_PI\n");
+                //  printk(KERN_INFO "kmorse: cycled BPSK at PHASE_PI\n");
                 gpiod_set_value(morse_dat->bm, 1);
                 usleep_range(MORSE_UNIT, MORSE_UNIT);
                 gpiod_set_value(morse_dat->bm, 0);

@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 # Matthew Blanchard 
-# 2/17/2017
-# Title: encoding.pl
+# 4/20/2017
+# Title: enc-gen
 # Descrption: Generates C source & header files which encode all 256 ASCII C
 #       characters to Morse code. Reads encodings from file 'encoding.txt', and
 #       fills in remaining ASCII characters with unused Morse encodings.
